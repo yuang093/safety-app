@@ -1,0 +1,12 @@
+safety/
+├── public/
+│   └── template.xlsx       <-- 【關鍵】你的 Excel 模板一定要放在這裡！
+├── components/             <-- 建議放在根目錄下
+│   └── ExportExcelBtn.tsx
+├── app/
+│   ├── admin/
+│   │   └── page.tsx        <-- 後台頁面
+│   └── api/
+│       └── export-excel/
+│           └── route.ts    <-- 後端 API (注意路徑要對)
+└── package.json
