@@ -28,12 +28,13 @@ function AdminContent() {
   const [passwordInput, setPasswordInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
    
-  // 資料狀態 (申請單)
-  const [applications, setApplications] = useState<(ApplicationData & { id: string })[]>([]);
+  // 🟢 修正 1：擴充型別定義，讓 TypeScript 知道 ownerName 和 ownerId 是存在的
+  const [applications, setApplications] = useState<(ApplicationData & { id: string; ownerName?: string; ownerId?: string })[]>([]);
+  
   // 資料狀態 (使用者帳號 - 只有 admin 才會用到)
   const [users, setUsers] = useState<UserAccount[]>([]);
   
-  // 🟢 排序狀態設定 (預設依時間降冪)
+  // 排序狀態設定
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'createdAt', direction: 'desc' });
 
   const [loading, setLoading] = useState(false);
@@ -66,10 +67,10 @@ function AdminContent() {
       const querySnapshot = await getDocs(q);
       const list: any[] = [];
       querySnapshot.forEach((doc) => {
+        // 使用 as any 確保所有欄位都能順利讀入
         list.push({ id: doc.id, ...doc.data() as any });
       });
       
-      // 移除原本的預設排序，改由前端即時運算 (sortedApplications) 處理
       setApplications(list);
     } catch (error) {
       console.error("讀取申請單錯誤:", error);
@@ -78,17 +79,16 @@ function AdminContent() {
     }
   };
 
-  // --- 🟢 處理排序邏輯 ---
+  // --- 處理排序邏輯 ---
   const handleSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc';
-    // 如果點擊的是同一個欄位，就反轉排序方向
     if (sortConfig.key === key && sortConfig.direction === 'asc') {
       direction = 'desc';
     }
     setSortConfig({ key, direction });
   };
 
-  // --- 🟢 計算排序後的資料 (使用 useMemo 優化效能) ---
+  // --- 計算排序後的資料 (使用 useMemo 優化效能) ---
   const sortedApplications = useMemo(() => {
     const sortedList = [...applications];
     sortedList.sort((a: any, b: any) => {
@@ -97,7 +97,6 @@ function AdminContent() {
       let valA = a[key];
       let valB = b[key];
 
-      // 特殊欄位處理
       if (key === 'workers') {
         valA = a.workers?.length || 0;
         valB = b.workers?.length || 0;
@@ -105,7 +104,6 @@ function AdminContent() {
         valA = valA ? new Date(valA).getTime() : 0;
         valB = valB ? new Date(valB).getTime() : 0;
       } else {
-        // 一般字串處理 (避免 null 報錯)
         valA = valA ? String(valA).toLowerCase() : '';
         valB = valB ? String(valB).toLowerCase() : '';
       }
@@ -247,14 +245,17 @@ function AdminContent() {
 
   // --- 匯出 CSV ---
   const handleExportCSV = () => {
-    const headers = ['BackupID(勿改),申請人,電話,供應商,負責人,聯絡人,填表時間,員工姓名,員工身分證,血型,生日,歸屬帳號']; // 🟢 CSV 也加上歸屬帳號
+    const headers = ['BackupID(勿改),申請人,電話,供應商,負責人,聯絡人,填表時間,員工姓名,員工身分證,血型,生日,歸屬帳號'];
     const rows: string[] = [];
-    // 匯出時使用目前的排序結果
+    
     sortedApplications.forEach(app => {
       const clean = (val: any) => val ? String(val).replace(/,/g, '，') : ''; 
       const phoneFmt = app.phone ? `'="${app.phone}"` : ''; 
       const createdAt = app.createdAt || '';
-      const owner = clean(app.ownerName || app.ownerId || ''); // 🟢 抓取 owner
+      
+      // 🟢 修正 2：使用 (app as any) 來避免 TypeScript 報錯
+      const appAny = app as any;
+      const owner = clean(appAny.ownerName || appAny.ownerId || '');
 
       if (!app.workers || app.workers.length === 0) {
         rows.push(`${app.id},${clean(app.applicant)},${phoneFmt},${clean(app.vendor_name)},${clean(app.vendor_rep)},${clean(app.contact_person)},${createdAt},,,,,${owner}`);
@@ -363,9 +364,7 @@ function AdminContent() {
         </div>
       </div>
 
-      {/* ======================================================== */}
-      {/* 👑 超級管理員專屬區塊：帳號管理                         */}
-      {/* ======================================================== */}
+      {/* 超級管理員專屬區塊 */}
       {targetUser === 'admin' && (
         <div className="max-w-6xl mx-auto bg-white p-6 rounded-2xl shadow-md border-l-4 border-indigo-500 mb-8">
           <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center">
@@ -421,10 +420,7 @@ function AdminContent() {
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 📋 申請單資料列表 (含排序功能)                          */}
-      {/* ======================================================== */}
-      
+      {/* 申請單資料列表 (含排序) */}
       <div className="max-w-6xl mx-auto bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-6 flex flex-wrap gap-4 items-center">
         <button onClick={handleExportCSV} className="flex items-center gap-2 px-5 py-2.5 bg-green-50 text-green-700 rounded-xl hover:bg-green-100 border border-green-200 font-medium">
           <span>📤</span> 備份資料庫 (CSV)
@@ -444,7 +440,6 @@ function AdminContent() {
             <table className="w-full text-left">
               <thead className="bg-gray-50 text-gray-500 text-sm uppercase">
                 <tr>
-                  {/* 🟢 可排序的標題群 */}
                   <th className="p-4 cursor-pointer hover:bg-gray-100 select-none" onClick={() => handleSort('ownerName')}>
                     管理者 {getSortIcon('ownerName')}
                   </th>
@@ -463,7 +458,6 @@ function AdminContent() {
                   <th className="p-4 cursor-pointer hover:bg-gray-100 select-none" onClick={() => handleSort('createdAt')}>
                     填表時間 {getSortIcon('createdAt')}
                   </th>
-                  
                   <th className="p-4 text-center">操作</th>
                 </tr>
               </thead>
@@ -471,9 +465,7 @@ function AdminContent() {
                 {sortedApplications.length === 0 ? <tr><td colSpan={7} className="p-8 text-center text-gray-400">沒有資料</td></tr> : 
                   sortedApplications.map((app) => (
                     <tr key={app.id} className="hover:bg-gray-50 group">
-                      {/* 🟢 顯示管理者名稱 (若無名稱則顯示 ID) */}
                       <td className="p-4 text-indigo-600 font-bold text-xs">{app.ownerName || app.ownerId || '-'}</td>
-                      
                       <td className="p-4 font-medium">{app.applicant}</td>
                       <td className="p-4 text-gray-600">{app.phone}</td>
                       <td className="p-4 text-gray-600">{app.vendor_name}</td>
