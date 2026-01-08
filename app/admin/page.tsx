@@ -64,6 +64,7 @@ function AdminContent() {
       const querySnapshot = await getDocs(q);
       const list: any[] = [];
       querySnapshot.forEach((doc) => {
+        // 修正：加上 as any 避免 TypeScript 建置錯誤
         list.push({ id: doc.id, ...doc.data() as any });
       });
       
@@ -339,7 +340,6 @@ function AdminContent() {
                     <tr>
                       <th className="p-3">帳號 (Name)</th>
                       <th className="p-3">密碼 (Code)</th>
-                      {/* 🟢 新增表頭：填表連結 */}
                       <th className="p-3">填表連結</th>
                       <th className="p-3 text-center">操作</th>
                     </tr>
@@ -351,9 +351,10 @@ function AdminContent() {
                           {u.name} 
                           {u.name === 'admin' && <span className="ml-2 text-xs bg-yellow-100 text-yellow-700 px-1 rounded">Admin</span>}
                         </td>
-                        <td className="p-3 font-mono text-gray-500">{u.code}</td>
                         
-                        {/* 🟢 新增內容：超連結 */}
+                        {/* 🔴 密碼欄位：改成星號顯示 */}
+                        <td className="p-3 font-mono text-gray-400 tracking-widest">••••••</td>
+                        
                         <td className="p-3">
                            <a 
                              href={`/form/${u.name}`} 
@@ -399,13 +400,16 @@ function AdminContent() {
                   value={newUser.name}
                   onChange={e => setNewUser({...newUser, name: e.target.value})}
                 />
+                
+                {/* 🔴 新增使用者密碼欄位：改成 password 類型 */}
                 <input 
-                  type="text" 
+                  type="password" 
                   placeholder="設定密碼" 
                   className="w-full p-2 border rounded focus:outline-blue-500"
                   value={newUser.code}
                   onChange={e => setNewUser({...newUser, code: e.target.value})}
                 />
+                
                 <button 
                   onClick={handleAddUser}
                   className="w-full py-2 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 shadow-sm"
