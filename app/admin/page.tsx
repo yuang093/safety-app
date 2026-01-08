@@ -64,7 +64,7 @@ function AdminContent() {
       const querySnapshot = await getDocs(q);
       const list: any[] = [];
       querySnapshot.forEach((doc) => {
-        list.push({ id: doc.id, ...doc.data() });
+        list.push({ id: doc.id, ...doc.data() as any });
       });
       
       list.sort((a, b) => {
