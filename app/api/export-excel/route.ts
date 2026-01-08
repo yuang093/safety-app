@@ -54,8 +54,8 @@ export async function POST(req: NextRequest) {
       { key: 'C', width: 23.50 },  
       { key: 'D', width: 9 },      
       { key: 'E', width: 13.13 },  
-      { key: 'F', width: 14 },     
-      { key: 'G', width: 14 },     
+      { key: 'F', width: 15 },     
+      { key: 'G', width: 15 },     
       { key: 'H', width: 33.00 },  
     ];
 
