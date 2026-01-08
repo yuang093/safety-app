@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useMemo } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
@@ -33,6 +33,9 @@ function AdminContent() {
   // 資料狀態 (使用者帳號 - 只有 admin 才會用到)
   const [users, setUsers] = useState<UserAccount[]>([]);
   
+  // 🟢 排序狀態設定 (預設依時間降冪)
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'createdAt', direction: 'desc' });
+
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false); 
 
@@ -43,7 +46,6 @@ function AdminContent() {
   useEffect(() => {
     if (isAuthenticated && targetUser) {
       fetchApplications();
-      // 如果是超級管理員，順便抓取使用者列表
       if (targetUser === 'admin') {
         fetchAccounts();
       }
@@ -64,16 +66,10 @@ function AdminContent() {
       const querySnapshot = await getDocs(q);
       const list: any[] = [];
       querySnapshot.forEach((doc) => {
-        // 修正：加上 as any 避免 TypeScript 建置錯誤
         list.push({ id: doc.id, ...doc.data() as any });
       });
       
-      list.sort((a, b) => {
-         const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-         const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-         return dateB - dateA;
-      });
-
+      // 移除原本的預設排序，改由前端即時運算 (sortedApplications) 處理
       setApplications(list);
     } catch (error) {
       console.error("讀取申請單錯誤:", error);
@@ -82,7 +78,52 @@ function AdminContent() {
     }
   };
 
-  // --- 讀取帳號列表 (Accounts) - Admin Only ---
+  // --- 🟢 處理排序邏輯 ---
+  const handleSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    // 如果點擊的是同一個欄位，就反轉排序方向
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  // --- 🟢 計算排序後的資料 (使用 useMemo 優化效能) ---
+  const sortedApplications = useMemo(() => {
+    const sortedList = [...applications];
+    sortedList.sort((a: any, b: any) => {
+      const { key, direction } = sortConfig;
+      
+      let valA = a[key];
+      let valB = b[key];
+
+      // 特殊欄位處理
+      if (key === 'workers') {
+        valA = a.workers?.length || 0;
+        valB = b.workers?.length || 0;
+      } else if (key === 'createdAt') {
+        valA = valA ? new Date(valA).getTime() : 0;
+        valB = valB ? new Date(valB).getTime() : 0;
+      } else {
+        // 一般字串處理 (避免 null 報錯)
+        valA = valA ? String(valA).toLowerCase() : '';
+        valB = valB ? String(valB).toLowerCase() : '';
+      }
+
+      if (valA < valB) return direction === 'asc' ? -1 : 1;
+      if (valA > valB) return direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return sortedList;
+  }, [applications, sortConfig]);
+
+  // --- 輔助函式：顯示排序箭頭 ---
+  const getSortIcon = (key: string) => {
+    if (sortConfig.key !== key) return <span className="text-gray-300 ml-1">↕</span>;
+    return sortConfig.direction === 'asc' ? <span className="text-blue-600 ml-1">▲</span> : <span className="text-blue-600 ml-1">▼</span>;
+  };
+
+  // --- 讀取帳號列表 (Accounts) ---
   const fetchAccounts = async () => {
     try {
       const q = query(collection(db, "accounts"));
@@ -91,7 +132,6 @@ function AdminContent() {
       querySnapshot.forEach((doc) => {
         userList.push({ id: doc.id, ...doc.data() } as UserAccount);
       });
-      // 排序：admin 排最上面
       userList.sort((a, b) => (a.name === 'admin' ? -1 : 1));
       setUsers(userList);
     } catch (error) {
@@ -105,7 +145,6 @@ function AdminContent() {
       alert("請輸入帳號與密碼");
       return;
     }
-    // 簡單檢查帳號是否重複
     if (users.some(u => u.name === newUser.name)) {
       alert("帳號名稱已存在");
       return;
@@ -119,7 +158,7 @@ function AdminContent() {
       });
       alert(`✅ 帳號 ${newUser.name} 新增成功！`);
       setNewUser({ name: '', code: '' });
-      fetchAccounts(); // 重新整理列表
+      fetchAccounts(); 
     } catch (error) {
       console.error("新增失敗", error);
       alert("新增失敗");
@@ -208,18 +247,20 @@ function AdminContent() {
 
   // --- 匯出 CSV ---
   const handleExportCSV = () => {
-    const headers = ['BackupID(勿改),申請人,電話,供應商,負責人,聯絡人,填表時間,員工姓名,員工身分證,血型,生日'];
+    const headers = ['BackupID(勿改),申請人,電話,供應商,負責人,聯絡人,填表時間,員工姓名,員工身分證,血型,生日,歸屬帳號']; // 🟢 CSV 也加上歸屬帳號
     const rows: string[] = [];
-    applications.forEach(app => {
+    // 匯出時使用目前的排序結果
+    sortedApplications.forEach(app => {
       const clean = (val: any) => val ? String(val).replace(/,/g, '，') : ''; 
       const phoneFmt = app.phone ? `'="${app.phone}"` : ''; 
       const createdAt = app.createdAt || '';
+      const owner = clean(app.ownerName || app.ownerId || ''); // 🟢 抓取 owner
 
       if (!app.workers || app.workers.length === 0) {
-        rows.push(`${app.id},${clean(app.applicant)},${phoneFmt},${clean(app.vendor_name)},${clean(app.vendor_rep)},${clean(app.contact_person)},${createdAt},,,,`);
+        rows.push(`${app.id},${clean(app.applicant)},${phoneFmt},${clean(app.vendor_name)},${clean(app.vendor_rep)},${clean(app.contact_person)},${createdAt},,,,,${owner}`);
       } else {
         app.workers.forEach(worker => {
-          rows.push(`${app.id},${clean(app.applicant)},${phoneFmt},${clean(app.vendor_name)},${clean(app.vendor_rep)},${clean(app.contact_person)},${createdAt},${clean(worker.name)},${clean(worker.idNumber)},${clean(worker.bloodType)},${clean(worker.birthday)}`);
+          rows.push(`${app.id},${clean(app.applicant)},${phoneFmt},${clean(app.vendor_name)},${clean(app.vendor_rep)},${clean(app.contact_person)},${createdAt},${clean(worker.name)},${clean(worker.idNumber)},${clean(worker.bloodType)},${clean(worker.birthday)},${owner}`);
         });
       }
     });
@@ -323,7 +364,7 @@ function AdminContent() {
       </div>
 
       {/* ======================================================== */}
-      {/* 👑 超級管理員專屬區塊：帳號管理 (只顯示給 admin)        */}
+      {/* 👑 超級管理員專屬區塊：帳號管理                         */}
       {/* ======================================================== */}
       {targetUser === 'admin' && (
         <div className="max-w-6xl mx-auto bg-white p-6 rounded-2xl shadow-md border-l-4 border-indigo-500 mb-8">
@@ -332,7 +373,6 @@ function AdminContent() {
           </h2>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* 左邊：現有帳號列表 */}
             <div className="md:col-span-2">
               <div className="overflow-hidden rounded-lg border border-gray-200">
                 <table className="w-full text-left text-sm">
@@ -351,35 +391,16 @@ function AdminContent() {
                           {u.name} 
                           {u.name === 'admin' && <span className="ml-2 text-xs bg-yellow-100 text-yellow-700 px-1 rounded">Admin</span>}
                         </td>
-                        
-                        {/* 🔴 密碼欄位：改成星號顯示 */}
                         <td className="p-3 font-mono text-gray-400 tracking-widest">••••••</td>
-                        
                         <td className="p-3">
-                           <a 
-                             href={`/form/${u.name}`} 
-                             target="_blank" 
-                             rel="noopener noreferrer"
-                             className="text-blue-600 hover:text-blue-800 underline text-xs flex items-center gap-1"
-                           >
+                           <a href={`/form/${u.name}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 underline text-xs flex items-center gap-1">
                              🔗 /form/{u.name}
                            </a>
                         </td>
-
                         <td className="p-3 flex justify-center gap-2">
-                          <button 
-                            onClick={() => handleUpdatePassword(u.id, u.name)}
-                            className="px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 text-xs"
-                          >
-                            修改密碼
-                          </button>
+                          <button onClick={() => handleUpdatePassword(u.id, u.name)} className="px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 text-xs">修改密碼</button>
                           {u.name !== 'admin' && (
-                            <button 
-                              onClick={() => handleDeleteUser(u.id, u.name)}
-                              className="px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 text-xs"
-                            >
-                              刪除
-                            </button>
+                            <button onClick={() => handleDeleteUser(u.id, u.name)} className="px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 text-xs">刪除</button>
                           )}
                         </td>
                       </tr>
@@ -388,34 +409,12 @@ function AdminContent() {
                 </table>
               </div>
             </div>
-
-            {/* 右邊：新增帳號表單 */}
             <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 h-fit">
               <h3 className="font-bold text-gray-700 mb-3">➕ 新增使用者</h3>
               <div className="space-y-3">
-                <input 
-                  type="text" 
-                  placeholder="帳號名稱 (例如: user1)" 
-                  className="w-full p-2 border rounded focus:outline-blue-500"
-                  value={newUser.name}
-                  onChange={e => setNewUser({...newUser, name: e.target.value})}
-                />
-                
-                {/* 🔴 新增使用者密碼欄位：改成 password 類型 */}
-                <input 
-                  type="password" 
-                  placeholder="設定密碼" 
-                  className="w-full p-2 border rounded focus:outline-blue-500"
-                  value={newUser.code}
-                  onChange={e => setNewUser({...newUser, code: e.target.value})}
-                />
-                
-                <button 
-                  onClick={handleAddUser}
-                  className="w-full py-2 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 shadow-sm"
-                >
-                  確認新增
-                </button>
+                <input type="text" placeholder="帳號名稱 (例如: user1)" className="w-full p-2 border rounded focus:outline-blue-500" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} />
+                <input type="password" placeholder="設定密碼" className="w-full p-2 border rounded focus:outline-blue-500" value={newUser.code} onChange={e => setNewUser({...newUser, code: e.target.value})} />
+                <button onClick={handleAddUser} className="w-full py-2 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 shadow-sm">確認新增</button>
               </div>
             </div>
           </div>
@@ -423,15 +422,13 @@ function AdminContent() {
       )}
 
       {/* ======================================================== */}
-      {/* 一般功能區：申請單資料列表 (所有人可見)                   */}
+      {/* 📋 申請單資料列表 (含排序功能)                          */}
       {/* ======================================================== */}
       
-      {/* 控制列 */}
       <div className="max-w-6xl mx-auto bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-6 flex flex-wrap gap-4 items-center">
         <button onClick={handleExportCSV} className="flex items-center gap-2 px-5 py-2.5 bg-green-50 text-green-700 rounded-xl hover:bg-green-100 border border-green-200 font-medium">
           <span>📤</span> 備份資料庫 (CSV)
         </button>
-
         <div className="relative">
           <input type="file" accept=".csv" onChange={handleImportCSV} disabled={importing} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
           <button className={`flex items-center gap-2 px-5 py-2.5 rounded-xl border font-medium ${importing ? 'bg-gray-100' : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200'}`}>
@@ -441,25 +438,42 @@ function AdminContent() {
         <div className="text-xs text-gray-400 ml-auto hidden md:block">* 還原將寫入至 {targetUser} 帳戶</div>
       </div>
 
-      {/* 申請單表格 */}
       <div className="max-w-6xl mx-auto bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-100">
         {loading ? <div className="p-10 text-center text-gray-500">載入中...</div> : (
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-gray-50 text-gray-500 text-sm uppercase">
                 <tr>
-                  <th className="p-4">申請人</th>
-                  <th className="p-4">電話</th>
-                  <th className="p-4">供應商</th>
-                  <th className="p-4">人數</th>
-                  <th className="p-4">時間</th>
+                  {/* 🟢 可排序的標題群 */}
+                  <th className="p-4 cursor-pointer hover:bg-gray-100 select-none" onClick={() => handleSort('ownerName')}>
+                    管理者 {getSortIcon('ownerName')}
+                  </th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100 select-none" onClick={() => handleSort('applicant')}>
+                    申請人 {getSortIcon('applicant')}
+                  </th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100 select-none" onClick={() => handleSort('phone')}>
+                    電話 {getSortIcon('phone')}
+                  </th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100 select-none" onClick={() => handleSort('vendor_name')}>
+                    供應商 {getSortIcon('vendor_name')}
+                  </th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100 select-none" onClick={() => handleSort('workers')}>
+                    進場人數 {getSortIcon('workers')}
+                  </th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100 select-none" onClick={() => handleSort('createdAt')}>
+                    填表時間 {getSortIcon('createdAt')}
+                  </th>
+                  
                   <th className="p-4 text-center">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {applications.length === 0 ? <tr><td colSpan={6} className="p-8 text-center text-gray-400">沒有資料</td></tr> : 
-                  applications.map((app) => (
+                {sortedApplications.length === 0 ? <tr><td colSpan={7} className="p-8 text-center text-gray-400">沒有資料</td></tr> : 
+                  sortedApplications.map((app) => (
                     <tr key={app.id} className="hover:bg-gray-50 group">
+                      {/* 🟢 顯示管理者名稱 (若無名稱則顯示 ID) */}
+                      <td className="p-4 text-indigo-600 font-bold text-xs">{app.ownerName || app.ownerId || '-'}</td>
+                      
                       <td className="p-4 font-medium">{app.applicant}</td>
                       <td className="p-4 text-gray-600">{app.phone}</td>
                       <td className="p-4 text-gray-600">{app.vendor_name}</td>
